@@ -214,6 +214,11 @@ function locOf(t){
   LOCS.forEach(function(l){var m=s.match(l[1]),n=m?m.length:0;if(/^(ГРАФИКА|АРХИВ)/.test(l[0])&&n)n+=1;if(n>bs){bs=n;best=l[0]}});
   return best;
 }
+function locByTag(tag){
+  var t=tag.toUpperCase().replace(/-/g,' '),hit='';
+  LOCS.forEach(function(l){if(hit)return;if(l[0]===t||l[0].split(' ').some(function(w){return w.length>2&&w.indexOf(t.split(' ')[0])===0}))hit=l[0]});
+  return hit||t;
+}
 function splitShots(t){
   var out=[],buf='',d=0,i=0,m;
   while(i<t.length){var c=t[i];
@@ -244,7 +249,7 @@ function parseScript(raw){
   function add(kind,text,time,extra){
     var tm=(time||curTime||'').replace(/\s/g,'');
     if(kind==='broll'){
-      var tag=text.match(/@([A-Za-zА-Яа-яЁё\-]+)/),fix=tag?tag[1].toUpperCase().replace(/-/g,' '):'',prev='';
+      var tag=text.match(/@([A-Za-zА-Яа-яЁё\-]+)/),fix=tag?locByTag(tag[1]):'',prev='';
       if(tag)text=text.replace(tag[0],'').replace(/\s{2,}/g,' ').trim();
       splitShots(text).forEach(function(sh){var l=fix||locOf(sh)||prev||LOC_OTHER;prev=l;cur.items.push({kind:'broll',text:sh,time:tm,extra:extra||'',loc:l})});
       return null;
