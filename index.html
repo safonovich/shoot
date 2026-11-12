@@ -117,6 +117,9 @@ textarea:focus{outline:0;border-color:var(--gold)}
 .help{font-size:14px;color:var(--mut)}
 .help code{color:var(--tx);font-family:ui-monospace,Menlo,monospace;font-size:13px}
 .help pre{background:var(--card);border:2px solid var(--line);padding:10px;color:var(--tx);font:13px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap}
+.fld{display:block;font-family:var(--px);font-size:8px;color:var(--mut);line-height:1.8;margin-top:10px;flex:1;min-width:0}
+.fld input{display:block;width:100%;margin-top:6px;background:var(--card);color:var(--tx);border:2px solid var(--line);border-radius:0;padding:10px;font:16px var(--ui);color-scheme:dark;-webkit-appearance:none;min-height:46px}
+.row2{display:flex;gap:10px}
 /* тост */
 .toast{position:fixed;left:50%;bottom:22px;transform:translate(-50%,160%);z-index:40;width:min(92vw,480px);background:#000;border:2px solid var(--gold);padding:12px 14px;display:flex;gap:12px;align-items:center;transition:transform .35s steps(6)}
 .toast.on{transform:translate(-50%,0)}
@@ -164,6 +167,16 @@ textarea:focus{outline:0;border-color:var(--gold)}
 **ГГ:** Меня зовут Егор.
 **Звук:** тишина → тихий тон</pre>
     <code>БИРОЛ</code> → шоты, которые сами раскладываются по локациям (локацию любого шота можно поменять под ним; в сценарии её можно задать явно: <code>**БИРОЛ:** руки, чаша @мастерская</code>). <code>ЗК</code> → текст с двумя галочками: золотая «ЗК» — записал голосом, красная «ГГ» — снял в кадре. Звук, графика и ре-хуки показываются подсказками внутри блока. Запасные хуки идут бонусом и на прохождение не влияют.
+  </div>
+  <h3>НАПОМИНАНИЯ В TELEGRAM</h3>
+  <div id="ntOff" class="help">На этом устройстве напоминания не подключены. Они включаются личной ссылкой — открой её один раз на телефоне.</div>
+  <div id="ntOn" hidden>
+    <label class="fld">КОГДА СНИМАЕМ<input type="datetime-local" id="nShoot"></label>
+    <div class="row2"><label class="fld">УТРОМ В ДЕНЬ СЪЁМКИ<input type="time" id="nMorn"></label><label class="fld">ВЕЧЕРНИЙ ИТОГ<input type="time" id="nEve"></label></div>
+    <div class="help">Утром и в час съёмки напомню, что осталось по локациям. Вечером пришлю итог, только если за день были галочки. Если сценарий молчит три дня — один мягкий толчок, не чаще раза в три дня.</div>
+    <button class="btn" id="nQuiet">ТИХИЙ РЕЖИМ: ВЫКЛ</button>
+    <button class="btn dim" id="nTest">ПРИСЛАТЬ ПРОБНОЕ</button>
+    <div class="found" id="nSt"></div>
   </div>
   <h3>ПРОГРЕСС</h3>
   <button class="btn dim" id="bReset">СБРОСИТЬ ГАЛОЧКИ ЭТОГО СЦЕНАРИЯ</button>
@@ -294,6 +307,9 @@ function sprite(name){
 
 /* ---------- состояние ---------- */
 var S=store.get()||{scripts:[],cur:'',prog:{},byLoc:true};
+var API='https://shoot-notify.safpelerin.workers.dev';
+if(!S.nt)S.nt={key:'',shootAt:'',morning:'09:00',evening:'21:00',quiet:false};
+(function(){var m=location.hash.match(/^#k-([A-Za-z0-9]{16,64})$/);if(m){S.nt.key=m[1];store.set(S);try{history.replaceState(null,'',location.pathname)}catch(e){location.hash=''}}})();
 var doc=null,P=null,tab='broll',hide=false;
 function hash(s){var h=5381;for(var i=0;i<s.length;i++)h=((h<<5)+h+s.charCodeAt(i))|0;return 'k'+(h>>>0).toString(36)}
 function save(){var ok=store.set(S);$('stNote').textContent=ok?'':'Браузер не даёт сохранять — галочки живут, пока открыта страница.';}
@@ -462,7 +478,31 @@ function render(){
 }
 function find(id){for(var i=0;i<doc.secs.length;i++)for(var j=0;j<doc.secs[i].items.length;j++)if(doc.secs[i].items[j].id===id)return doc.secs[i].items[j]}
 function redraw(){var y=window.scrollY;render();window.scrollTo(0,y)}
-function flip(map,id){if(map[id])delete map[id];else{map[id]=Date.now();P.log.push(Date.now());P.log=P.log.slice(-8)}save();redraw();checkAch()}
+function flip(map,id){if(map[id])delete map[id];else{map[id]=Date.now();P.log.push(Date.now());P.log=P.log.slice(-8)}save();redraw();checkAch();sync()}
+
+/* ---------- напоминания ---------- */
+var syncT=null;
+function post(path,body){body.key=S.nt.key;return fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.json()})}
+function syncNow(){
+  if(!S.nt.key||!doc)return Promise.resolve(null);
+  var st=stats();
+  return post('/sync',{script:S.cur,title:doc.title,tot:st.tot,done:st.done,textLeft:st.vo[0]-st.vo[1],
+    locs:locStats().map(function(l){var left=l.items.filter(function(x){return !x.sec.alt&&!P.done[x.it.id]}).length;return{n:l.name,left:left}}).filter(function(l){return l.left>0}),
+    shootAt:S.nt.shootAt,morning:S.nt.morning,evening:S.nt.evening,quiet:S.nt.quiet,tz:-new Date().getTimezoneOffset()})
+    .then(function(r){ntStatus(r&&r.ok?'СИНХРОНИЗИРОВАНО':'СЕРВЕР НЕ ПРИНЯЛ КЛЮЧ',r&&r.ok);return r})
+    .catch(function(){ntStatus('НЕТ СВЯЗИ — ОТПРАВЛЮ ПРИ СЛЕДУЮЩЕЙ ГАЛОЧКЕ',false)});
+}
+function sync(){clearTimeout(syncT);syncT=setTimeout(syncNow,1500)}
+function ntStatus(t,ok){var e=$('nSt');e.textContent=t;e.className='found'+(ok?' ok':'')}
+function ntUI(){
+  var on=!!S.nt.key;$('ntOn').hidden=!on;$('ntOff').hidden=on;if(!on)return;
+  $('nShoot').value=S.nt.shootAt;$('nMorn').value=S.nt.morning;$('nEve').value=S.nt.evening;
+  $('nQuiet').textContent='ТИХИЙ РЕЖИМ: '+(S.nt.quiet?'ВКЛ — НИЧЕГО НЕ ШЛЮ':'ВЫКЛ');$('nQuiet').classList.toggle('g',S.nt.quiet);
+}
+['nShoot','nMorn','nEve'].forEach(function(id){$(id).addEventListener('change',function(){
+  S.nt.shootAt=$('nShoot').value.slice(0,16);S.nt.morning=$('nMorn').value||'09:00';S.nt.evening=$('nEve').value||'21:00';save();syncNow()})});
+$('nQuiet').onclick=function(){S.nt.quiet=!S.nt.quiet;save();ntUI();syncNow()};
+$('nTest').onclick=function(){ntStatus('ОТПРАВЛЯЮ…',false);post('/test',{}).then(function(r){ntStatus(r&&r.ok?'УШЛО — ПОСМОТРИ TELEGRAM':'НЕ ПОЛУЧИЛОСЬ',r&&r.ok)}).catch(function(){ntStatus('НЕТ СВЯЗИ',false)})};
 
 /* ---------- события ---------- */
 $('main').addEventListener('click',function(e){
@@ -478,7 +518,7 @@ $('main').addEventListener('change',function(e){
   var it=find(s.dataset.loc);it.loc=s.value;P.loc[it.id]=s.value;save();redraw();
 });
 $('tabs').addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;tab=b.dataset.tab;render();window.scrollTo(0,0)});
-function menu(on){$('ovMenu').classList.toggle('on',on);if(on)list()}
+function menu(on){$('ovMenu').classList.toggle('on',on);if(on){list();ntUI()}}
 $('bMenu').onclick=function(){menu(true)};$('bClose').onclick=function(){menu(false)};
 $('bWin').onclick=function(){$('ovWin').classList.remove('on');tab='ach';render()};
 function list(){
@@ -490,7 +530,7 @@ function list(){
 }
 $('scList').addEventListener('click',function(e){
   var b=e.target.closest('button');if(!b)return;
-  if(b.dataset.open){S.cur=b.dataset.open;save();open();tab='broll';render();menu(false);window.scrollTo(0,0);return}
+  if(b.dataset.open){S.cur=b.dataset.open;save();open();tab='broll';render();menu(false);window.scrollTo(0,0);sync();return}
   if(b.dataset.del){
     if(!b.classList.contains('sure')){b.classList.add('sure');b.textContent='ТОЧНО?';setTimeout(function(){b.classList.remove('sure');b.textContent='УБР.'},2500);return}
     var id=b.dataset.del;S.scripts=S.scripts.filter(function(s){return s.id!==id});delete S.prog[id];if(S.cur===id)S.cur='';save();open();render();list()}
@@ -504,7 +544,7 @@ function preview(){
     :'НЕ ВИЖУ МЕТОК «БИРОЛ:» И «ЗК:» — СМОТРИ ПОДСКАЗКУ НИЖЕ';
 }
 $('ta').addEventListener('input',preview);
-$('bLoad').onclick=function(){if(addScript($('ta').value)){$('ta').value='';preview();open();tab='broll';render();menu(false);window.scrollTo(0,0)}};
+$('bLoad').onclick=function(){if(addScript($('ta').value)){$('ta').value='';preview();open();tab='broll';render();menu(false);window.scrollTo(0,0);sync()}};
 $('bFile').onclick=function(){$('file').click()};
 $('file').onchange=function(){var f=this.files[0];if(!f)return;var r=new FileReader();r.onload=function(){$('ta').value=r.result;preview()};r.readAsText(f);this.value=''};
 $('bReset').onclick=function(){var b=this,T='СБРОСИТЬ ГАЛОЧКИ ЭТОГО СЦЕНАРИЯ';
@@ -515,7 +555,7 @@ $('bReset').onclick=function(){var b=this,T='СБРОСИТЬ ГАЛОЧКИ Э�
 /* ---------- старт ---------- */
 if(!S.scripts.length){var demo=$('demo').textContent;if(demo.trim().length>20)addScript(demo)}
 open();render();
-if(!doc)menu(true);
+if(!doc)menu(true);else sync();
 })();
 
 </script>
